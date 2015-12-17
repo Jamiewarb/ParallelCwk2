@@ -1,4 +1,4 @@
-# Parallel Computing - Coursework 1
+# Parallel Computing - Coursework 2 (Open MPI)
 The second coursework for Final Year Bath Comp Sci, Parallel Computing unit
 
 This zip contains 3 folders:
