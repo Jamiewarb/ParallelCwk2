@@ -1,3 +1,11 @@
+/* This program relaxes all non-boundary values in an array
+ * using sequential programming.
+ * A file is read in or numbers generated, then the 
+ * non-boundary numbers are averaged based on their 
+ * neighbours, until no number changes more than the value 
+ * of precision.
+ **/
+
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -11,11 +19,12 @@
 #define BILLION 1000000000L
 
 double fRand(double, double);
+void printArray(double*, int, int);
 
 int main(int argc, char *argv[]) {
 
-	/* Values hard coded - ensure to update
-	 * debug - The level of debug output: 0, 1, 2
+	/* Values hard coded - ensure to update or use command line parameters detailed in README
+	 * debug - The level of debug output: 0, 1, 2, 3
 	 * dimension - how big the square array is
 	 * precision - how precise the relaxation needs to be before the program ends
 	 *
@@ -30,12 +39,18 @@ int main(int argc, char *argv[]) {
 
 	int generateNumbers = 0;
 	// textFile needs to be set and filled in if generateNumbers == 0
-	char textFile[] = "scratch/values.txt";
+	char textFile[] = "../Values/values.txt";
 	
+
+	// Whether to use ANSI colour codes in output (turn off when using Balena's output logging)
+	int useAnsi = 0;
+
 	/* End editable values */
 
 
 
+
+	// We need to use these in analysing the time the program takes
 	uint64_t diff;
 	struct timespec start, end;
 
@@ -88,8 +103,12 @@ int main(int argc, char *argv[]) {
 		}
 	}
 
+	// Check our precision isn't too extreme, and our dimension is of a large enough size
+	if (precision < 0.0000000001) precision = 0.0000000001;
+	if (dimension < 3) dimension = 3;
+
 	// Used to get the starting time of the program, in nanoseconds
-	//clock_gettime(CLOCK_MONOTONIC, &start);
+	clock_gettime(CLOCK_MONOTONIC, &start);
 
 	// We need to load the text file to read the numbers from
 	FILE *valueFile;
@@ -97,7 +116,7 @@ int main(int argc, char *argv[]) {
 	if (!generateNumbers) {
 		valueFile = fopen(textFile, "r");
 		if (valueFile == NULL) {
-			fprintf(stdout, "LOG ERROR - Failed to open file: %s. Exiting program\n", textFile);
+			fprintf(stdout, "LOG ERROR - Failed to open file: %s. Please check the path is valid and the file exists. Exiting program\n", textFile);
 			return 1;
 		}
 	}
@@ -112,37 +131,24 @@ int main(int argc, char *argv[]) {
 	
 	srand((unsigned)time(NULL));
 
-	// We need the initial numbers to be in both value arrays
-	// If not enough numbers, we rewind to the start of the file and keep reading
 	int i, j;
-	double *val = malloc(sizeof(double));
-	if (!val) {
-		fprintf(stderr, "LOG ERROR - Failed to malloc. Exiting program.\n");
-		return 1;
-	}
-
+	// We need i*j numbers, in both arrays
 	for (i = 0; i < dimension; i++) {
 		for (j = 0; j < dimension; j++) {
 			// If we're going to generate the numbers, or use predetermined ones
 			if (generateNumbers)
 				values[i*dimension+j] = fRand(1, 2);
 			else {
-				if (fscanf(valueFile, "%lf", val) <= 0) {
+				// Read in the next double. If it ends up being EOF, rewind and read again to same place.
+				if (fscanf(valueFile, "%lf", &values[i*dimension+j]) <= 0) {
 					rewind(valueFile);
-					fscanf(valueFile, "%lf", val);
+					fscanf(valueFile, "%lf", &values[i*dimension+j]);
 				}
-				values[i*dimension+j] = *val;
 			}
 			// And copy them to the new array as well
 			newValues[i*dimension+j] = values[i*dimension+j];
 		}
 	}
-	// We no longer need this array
-	free(val);
-
-	// Check out precision isn't too extreme, and our dimension is of a large enough size
-	if (precision < 0.0000000001) precision = 0.0000000001;
-	if (dimension < 3) dimension = 3;
 	
 	if (debug >= 1) {
 		fprintf(stdout, "LOG FINE - Using array of dimension %d.\n", dimension);
@@ -155,14 +161,7 @@ int main(int argc, char *argv[]) {
 	if (debug >= 2) {
 	/* Display initial array for debugging */
 		fprintf(stdout, "LOG FINEST - Working with array:\n");
-		for (i = 0; i < dimension; i++) {
-			for (j = 0; j < dimension; j++) {
-				if (i == 0 || i == dimension-1 || j == 0 || j == dimension -1)
-					fprintf(stdout, ANSI_COLOR_RED);
-				fprintf(stdout, "%f " ANSI_COLOR_RESET, values[i*dimension+j]);
-			}
-			fprintf(stdout, "\n");
-		}
+		printArray(values, dimension, useAnsi);
 	}
 
 	// Time to unwind and relax...
@@ -185,20 +184,18 @@ int main(int argc, char *argv[]) {
 		double *tempValues = values;
 		values = newValues;
 		newValues = tempValues;
+
+		if (debug >= 3) {
+			fprintf(stdout, "LOG GRANULAR - Array at step %d:\n", count);
+			printArray(values, dimension, useAnsi);
+		}
 	}
 
 	if (debug >= 1) 
 		fprintf(stdout, "\nLOG FINE - Program complete. Relaxation count: %d.\n", count);
 	if (debug >= 2) {
 		fprintf(stdout, "LOG FINEST - Final array:\n");
-		for (i = 0; i < dimension; i++) {
-			for (j = 0; j < dimension; j++) {
-				if (i == 0 || i == dimension-1 || j == 0 || j == dimension -1)
-					fprintf(stdout, ANSI_COLOR_RED);
-				fprintf(stdout, "%f " ANSI_COLOR_RESET, values[i*dimension+j]);
-			}
-			fprintf(stdout, "\n");
-		}
+		printArray(values, dimension, useAnsi);
 	}
 
 	// Your work here is done
@@ -207,10 +204,26 @@ int main(int argc, char *argv[]) {
 
 	fprintf(stdout, "Program complete.\n");
 
-	//clock_gettime(CLOCK_MONOTONIC, &end);	/* mark the end time */
+	clock_gettime(CLOCK_MONOTONIC, &end);	/* mark the end time */
 
 	diff = BILLION * (end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
 	printf("elapsed time = %llu nanoseconds\n", (long long unsigned int) diff);
+
+	return 0;
+}
+
+void printArray(double *values, int dimension, int useAnsi) {
+	int i,j;
+	for (i = 0; i < dimension; i++) {
+		for (j = 0; j < dimension; j++) {
+			if (i == 0 || i == dimension-1 || j == 0 || j == dimension -1) {
+				if (useAnsi) fprintf(stdout, ANSI_COLOR_RED);
+			}
+			fprintf(stdout, "%f ", values[i*dimension+j]);
+			if (useAnsi) fprintf(stdout, ANSI_COLOR_RESET);
+		}
+		fprintf(stdout, "\n");
+	}
 }
 
 double fRand(double fMin, double fMax) {

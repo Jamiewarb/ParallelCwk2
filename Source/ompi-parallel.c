@@ -5,9 +5,9 @@
  * all relax the portion of the array assigned
  * to them, and the child processes send their partial relaxations to 
  * the master, who constructs the final array.
+ * If any number changes more than the value of precision, the process
+ * is repeated, until it does not happen, at which point the program is finished.
  **/
-
- // Send rows above and below the ones to relax to each core
 
 #include <stdio.h>
 #include <string.h>
@@ -25,15 +25,16 @@
 #define return_data_tag 2002
 
 double fRand(double, double);
+void printArray(double*, int, int);
 
 int main(int argc, char *argv[]) {
 	
 	MPI_Status status;
-	int an_id, my_id, root_process, ierr, num_procs, start_row, end_row, 
+	int an_id, my_id, root_process, num_procs, start_row, end_row, 
 		num_elements_to_send, num_elements_received, num_elements_to_receive;
 
-	/* Values hard coded - ensure to update
-	 * debug - The level of debug output: 0, 1, 2
+	/* Values hard coded - ensure to update or use command line parameters detailed in README
+	 * debug - The level of debug output: 0, 1, 2, 3
 	 * dimension - how big the square array is
 	 * precision - how precise the relaxation needs to be before the program ends
 	 *
@@ -41,16 +42,22 @@ int main(int argc, char *argv[]) {
 	 * textFile[] - text file to read numbers from. Needs to be set and filled in if generateNumbers == 0
 	 */
 
-	int debug = 2; /* Debug output: 0 no detail - 1 some detail - 2 all detail */
+	int debug = 2; /* Debug output: 0 no detail - 1 some detail - 2 most detail - 3 step by step detail */
  
 	int dimension = 1000;
 	double precision = 0.1;
 
 	int generateNumbers = 0;
 	// textFile needs to be set and filled in if generateNumbers == 0
-	char textFile[] = "scratch/values.txt";
+	char textFile[] = "../Values/values.txt";
 	
+	
+	// Whether to use ANSI colour codes in output (turn off when using Balena's output logging)
+	int useAnsi = 0;
+
 	/* End editable values */
+
+	
 
 
 	// We need to use these in analysing the time the program takes
@@ -119,12 +126,12 @@ int main(int argc, char *argv[]) {
 	root_process = 0;
 
 	// Who am I, and how many of us are there?
-	ierr = MPI_Comm_rank(MPI_COMM_WORLD, &my_id);
-    ierr = MPI_Comm_size(MPI_COMM_WORLD, &num_procs);
+	MPI_Comm_rank(MPI_COMM_WORLD, &my_id);
+    MPI_Comm_size(MPI_COMM_WORLD, &num_procs);
 
     if (my_id == root_process) {
 
-    	// Executed by the master processes
+    	// Executed by the master process
 
 		// We need to load the text file to read the numbers from
 		FILE *valueFile;
@@ -132,7 +139,7 @@ int main(int argc, char *argv[]) {
 		if (!generateNumbers) {
 			valueFile = fopen(textFile, "r");
 			if (valueFile == NULL) {
-				fprintf(stdout, "LOG ERROR - Failed to open file: %s. Exiting program\n", textFile);
+				fprintf(stdout, "LOG ERROR - Failed to open file: %s. Please check the path is valid and the file exists. Exiting program\n", textFile);
 				return 1;
 			}
 		}
@@ -147,33 +154,24 @@ int main(int argc, char *argv[]) {
 		
 		srand((unsigned)time(NULL));
 
-		// We need the initial numbers to be in both value arrays
-		// If not enough numbers, we rewind to the start of the file and keep reading
 		int i, j;
-		double *val = malloc(sizeof(double));
-		if (!val) {
-			fprintf(stderr, "LOG ERROR - Failed to malloc. Exiting program.\n");
-			return 1;
-		}
-
+		// We need i*j numbers, in both arrays
 		for (i = 0; i < dimension; i++) {
 			for (j = 0; j < dimension; j++) {
 				// If we're going to generate the numbers, or use predetermined ones
 				if (generateNumbers)
 					values[i*dimension+j] = fRand(1, 2);
 				else {
-					if (fscanf(valueFile, "%lf", val) <= 0) {
+					// Read in the next double. If it ends up being EOF, rewind and read again to same place.
+					if (fscanf(valueFile, "%lf", &values[i*dimension+j]) <= 0) {
 						rewind(valueFile);
-						fscanf(valueFile, "%lf", val);
+						fscanf(valueFile, "%lf", &values[i*dimension+j]);
 					}
-					values[i*dimension+j] = *val;
 				}
 				// And copy them to the new array as well
 				newValues[i*dimension+j] = values[i*dimension+j];
 			}
 		}
-		// We no longer need this array
-		free(val);
 		
 		if (debug >= 1) {
 			fprintf(stdout, "LOG FINE - Using %d cores.\n", num_procs);
@@ -184,14 +182,7 @@ int main(int argc, char *argv[]) {
 		if (debug >= 2) {
 		/* Display initial array for debugging */
 			fprintf(stdout, "LOG FINEST - Working with array:\n");
-			for (i = 0; i < dimension; i++) {
-				for (j = 0; j < dimension; j++) {
-					if (i == 0 || i == dimension-1 || j == 0 || j == dimension -1)
-						fprintf(stdout, ANSI_COLOR_RED);
-					fprintf(stdout, "%f " ANSI_COLOR_RESET, values[i*dimension+j]);
-				}
-				fprintf(stdout, "\n");
-			}
+			printArray(values, dimension, useAnsi);
 		}
 
 		int count = 0; // Count how many times we try to relax the square array
@@ -201,17 +192,20 @@ int main(int argc, char *argv[]) {
 		int avg_rows = (floor((dimension - 2) / num_procs)) + 2; // We add two as we need the previous and next rows for relaxing
 		int extra_rows = (dimension - 2) % num_procs; // Get number of extra, remainder rows
 		int initial_end_row = avg_rows - 1; // Set end row of master thread, decrement for index (row 1 -> index 0)
+		int e_rows, my_rows;
 
 		while (!withinPrecision) {
 			count++;
 			withinPrecision = 1;
 
-			int e_rows = extra_rows; // Create a temporary variable that we can decrement
+			e_rows = extra_rows; // Create a temporary variable that we can decrement
 			end_row = initial_end_row; // Set the initial end_row to that of the master thread's end row
+
+			
 
 			for (an_id = 1; an_id < num_procs; an_id++) {
 				// Evenly distribute rows, give first threads extra rows until none left
-				int my_rows = avg_rows;
+				my_rows = avg_rows;
 				if (e_rows > 0) {
 					my_rows++;
 					e_rows--;
@@ -222,10 +216,10 @@ int main(int argc, char *argv[]) {
 
 				num_elements_to_send = my_rows*dimension; // Multiply by dimension as we need to send the columns per row too
 
-				ierr = MPI_Send( &num_elements_to_send, 1 , MPI_INT,
+				MPI_Send( &num_elements_to_send, 1 , MPI_INT,
 									an_id, send_data_tag, MPI_COMM_WORLD);
 
-				ierr = MPI_Send( &values[start_row*dimension], num_elements_to_send, MPI_DOUBLE,
+				MPI_Send( &values[start_row*dimension], num_elements_to_send, MPI_DOUBLE,
 									an_id, send_data_tag, MPI_COMM_WORLD);
 			}
 			// Then we need to process our part of the array
@@ -245,9 +239,10 @@ int main(int argc, char *argv[]) {
 			e_rows = extra_rows;
 			end_row = initial_end_row;
 			int returnedWP = 1;
+			int rows;
 
 			for (an_id = 1; an_id < num_procs; an_id++) {
-				int my_rows = avg_rows;
+				my_rows = avg_rows;
 				if (e_rows > 0) {
 					my_rows++;
 					e_rows--;
@@ -260,13 +255,17 @@ int main(int argc, char *argv[]) {
 
 				// Store the new relaxed portioned array here
 				double *tempVals = malloc(num_elements_to_receive * sizeof(double));
+				if (!tempVals) {
+					fprintf(stderr, "LOG ERROR - Failed to malloc. Exiting program.\n");
+					return 1;
+				}
 
-				ierr = MPI_Recv( tempVals, num_elements_to_receive, MPI_DOUBLE, 
+				MPI_Recv( tempVals, num_elements_to_receive, MPI_DOUBLE, 
 		               				an_id, return_data_tag, MPI_COMM_WORLD, &status);
 
 				num_elements_received = num_elements_to_receive;
 
-				ierr = MPI_Recv( &returnedWP, 1, MPI_INT, an_id, return_data_tag, 
+				MPI_Recv( &returnedWP, 1, MPI_INT, an_id, return_data_tag, 
 									MPI_COMM_WORLD, &status);
 
 				// Check if we went out of precision
@@ -274,7 +273,7 @@ int main(int argc, char *argv[]) {
 					withinPrecision = 0;
 				}
 
-				int rows = num_elements_received / dimension;
+				rows = num_elements_received / dimension;
 
 				// Finally merged this portion of the array in to newValues
 				for (i = 1; i < rows - 1; i++) { // Skip top and bottom rows
@@ -282,10 +281,11 @@ int main(int argc, char *argv[]) {
 						newValues[(start_row+i)*dimension+j] = tempVals[i*dimension+j];
 					}
 				}
+				free(tempVals);
 			}
 			// We need to tell all slaves if we went out of precision or not
 			for (an_id = 1; an_id < num_procs; an_id++) {
-				ierr = MPI_Send( &withinPrecision, 1 , MPI_INT,
+				MPI_Send( &withinPrecision, 1 , MPI_INT,
 										an_id, send_data_tag, MPI_COMM_WORLD);
 			}
 			// Finally swap the array pointers
@@ -295,14 +295,7 @@ int main(int argc, char *argv[]) {
 
 			if (debug >= 3) {
 				fprintf(stdout, "LOG GRANULAR - Array at step %d:\n", count);
-				for (i = 0; i < dimension; i++) {
-					for (j = 0; j < dimension; j++) {
-						if (i == 0 || i == dimension-1 || j == 0 || j == dimension -1)
-							fprintf(stdout, ANSI_COLOR_RED);
-						fprintf(stdout, "%f " ANSI_COLOR_RESET, values[i*dimension+j]);
-					}
-					fprintf(stdout, "\n");
-				}
+				printArray(values, dimension, useAnsi);
 			}
 		}
 
@@ -310,14 +303,7 @@ int main(int argc, char *argv[]) {
 			fprintf(stdout, "\nLOG FINE - Program complete. Relaxation count: %d.\n", count);
 		if (debug >= 2) {
 			fprintf(stdout, "LOG FINEST - Final array:\n");
-			for (i = 0; i < dimension; i++) {
-				for (j = 0; j < dimension; j++) {
-					if (i == 0 || i == dimension-1 || j == 0 || j == dimension -1)
-						fprintf(stdout, ANSI_COLOR_RED);
-					fprintf(stdout, "%f " ANSI_COLOR_RESET, values[i*dimension+j]);
-				}
-				fprintf(stdout, "\n");
-			}
+			printArray(values, dimension, useAnsi);
 		}
 		
 		// Your work here is done
@@ -336,18 +322,18 @@ int main(int argc, char *argv[]) {
 		// Executed by all slaves
 		int withinPrecision = 0;
 		while (!withinPrecision) {
-			ierr = MPI_Recv(&num_elements_to_receive, 1, MPI_INT, 
+			MPI_Recv(&num_elements_to_receive, 1, MPI_INT, 
 	               				root_process, send_data_tag, MPI_COMM_WORLD, &status);
 
-			// Declare two arrays, one to store current results & one to store changes
+			// Declare two arrays, one to receive current values & one to store changes
 			double *values = malloc(num_elements_to_receive * sizeof(double));
 			double *newValues = malloc(num_elements_to_receive * sizeof(double));
-			if (!newValues) {
+			if (!values || !newValues) {
 				fprintf(stderr, "LOG ERROR - Failed to malloc. Exiting program.\n");
 				return 1;
 			}
 
-	        ierr = MPI_Recv(values, num_elements_to_receive, MPI_DOUBLE, 
+	        MPI_Recv(values, num_elements_to_receive, MPI_DOUBLE, 
 	               				root_process, send_data_tag, MPI_COMM_WORLD, &status);
 	    
 
@@ -371,21 +357,40 @@ int main(int argc, char *argv[]) {
 			}
 
 			// Send back our relaxed array
-			ierr = MPI_Send( newValues, num_elements_received, MPI_DOUBLE, root_process, 
+			MPI_Send( newValues, num_elements_received, MPI_DOUBLE, root_process, 
 	               				return_data_tag, MPI_COMM_WORLD);
 
 			
 			// Send back our value for withinPrecision
-			ierr = MPI_Send( &withinPrecision, 1, MPI_INT, root_process, 
+			MPI_Send( &withinPrecision, 1, MPI_INT, root_process, 
 	               				return_data_tag, MPI_COMM_WORLD);
 
+			free(values);
+			free(newValues);
+
 			// Receive the global value for withinPrecision (if 1 then our program is finished and slaves ends)
-			ierr = MPI_Recv( &withinPrecision, 1, MPI_INT, 
+			MPI_Recv( &withinPrecision, 1, MPI_INT, 
 	               				root_process, send_data_tag, MPI_COMM_WORLD, &status);
+
 		}
 	}
 	// Finalize the MPI environment.
-	ierr = MPI_Finalize();
+	MPI_Finalize();
+	return 0;
+}
+
+void printArray(double *values, int dimension, int useAnsi) {
+	int i, j;
+	for (i = 0; i < dimension; i++) {
+		for (j = 0; j < dimension; j++) {
+			if (i == 0 || i == dimension-1 || j == 0 || j == dimension -1) {
+				if (useAnsi) fprintf(stdout, ANSI_COLOR_RED);
+			}
+			fprintf(stdout, "%f ", values[i*dimension+j]);
+			if (useAnsi) fprintf(stdout, ANSI_COLOR_RESET);
+		}
+		fprintf(stdout, "\n");
+	}
 }
 
 double fRand(double fMin, double fMax) {
