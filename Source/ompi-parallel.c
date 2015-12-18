@@ -292,6 +292,18 @@ int main(int argc, char *argv[]) {
 			double *tempValues = values;
 			values = newValues;
 			newValues = tempValues;
+
+			if (debug >= 3) {
+				fprintf(stdout, "LOG GRANULAR - Array at step %d:\n", count);
+				for (i = 0; i < dimension; i++) {
+					for (j = 0; j < dimension; j++) {
+						if (i == 0 || i == dimension-1 || j == 0 || j == dimension -1)
+							fprintf(stdout, ANSI_COLOR_RED);
+						fprintf(stdout, "%f " ANSI_COLOR_RESET, values[i*dimension+j]);
+					}
+					fprintf(stdout, "\n");
+				}
+			}
 		}
 
 		if (debug >= 1) 
