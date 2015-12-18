@@ -111,7 +111,7 @@ int main(int argc, char *argv[]) {
 	if (dimension < 3) dimension = 3;
 
 	// Used to get the starting time of the program, in nanoseconds
-	//clock_gettime(CLOCK_MONOTONIC, &start);
+	clock_gettime(CLOCK_MONOTONIC, &start);
 
 	// From here on, all processes execute this code
 	MPI_Init(NULL, NULL);
@@ -326,7 +326,7 @@ int main(int argc, char *argv[]) {
 
 		fprintf(stdout, "Program complete.\n");
 
-		//clock_gettime(CLOCK_MONOTONIC, &end);	// mark the end time 
+		clock_gettime(CLOCK_MONOTONIC, &end);	// mark the end time 
 
 		diff = BILLION * (end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
 		printf("elapsed time = %llu nanoseconds\n", (long long unsigned int) diff);
@@ -392,34 +392,3 @@ double fRand(double fMin, double fMax) {
     double f = (double)rand() / RAND_MAX;
     return fMin + f * (fMax - fMin);
 }
-
-
-
-
-
-
-
-	/*
-	// Time to unwind and relax...
-	while (!withinPrecision) {
-		count++;
-		withinPrecision = 1;
-		// Outside line of square array will remain static so skip it
-		for (i = 1; i < dimension - 1; i++) { // Skip top and bottom
-			for (j = 1; j < dimension - 1; j++) { // Skip left and right
-				// Store relaxed number into new array
-				newValues[i*dimension+j] = (values[(i-1)*dimension+j] + values[(i+1)*dimension+j] 
-							  + values[i*dimension+(j-1)] + values[i*dimension+(j+1)]) / 4.0;
-				// If the numbers changed more than precision, we need to do it again
-				if (fabs(values[i*dimension+j] - newValues[i*dimension+j]) > precision) {
-					withinPrecision = 0;
-				}
-			}
-		}
-		// Swap pointers, so we can continue working on the new array
-		double *tempValues = values;
-		values = newValues;
-		newValues = tempValues;
-	}
-
-	*/
