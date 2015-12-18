@@ -48,7 +48,7 @@ int main(int argc, char *argv[]) {
 
 	int generateNumbers = 0;
 	// textFile needs to be set and filled in if generateNumbers == 0
-	char textFile[] = "../Values/values.txt";
+	char textFile[] = "scratch/values.txt";
 	
 	/* End editable values */
 
