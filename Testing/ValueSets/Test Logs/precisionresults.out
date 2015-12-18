@@ -1,0 +1,32 @@
+/home/k/jw715
+LOG FINE - Using 16 cores.
+LOG FINE - Using array of dimension 500.
+LOG FINE - Working to precision of 1.0000000000.
+LOG FINE - Completed in 83644602 Nanoseconds
+LOG FINE - Using 16 cores.
+LOG FINE - Using array of dimension 500.
+LOG FINE - Working to precision of 0.1000000000.
+LOG FINE - Completed in 139587870 Nanoseconds
+LOG FINE - Using 16 cores.
+LOG FINE - Using array of dimension 500.
+LOG FINE - Working to precision of 0.0010000000.
+LOG FINE - Completed in 33199836617 Nanoseconds
+LOG FINE - Using 16 cores.
+LOG FINE - Using array of dimension 500.
+LOG FINE - Working to precision of 0.0000100000.
+LOG FINE - Completed in 148644991221 Nanoseconds
+
+
+
+########################################################################
+----------------------- Balena Job Details -----------------------------
+
+JobID			: 84559
+No. of nodes		: 1
+No. of CPUs		: 16
+Time limit		: 00:10:00
+Elapsed time		: 00:03:03
+Nodelist		: node-sw-162
+
+########################################################################
+

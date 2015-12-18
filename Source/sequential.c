@@ -16,7 +16,6 @@ int main(int argc, char *argv[]) {
 
 	/* Values hard coded - ensure to update
 	 * debug - The level of debug output: 0, 1, 2
-	 * cores - number of cores to use for the program
 	 * dimension - how big the square array is
 	 * precision - how precise the relaxation needs to be before the program ends
 	 *
@@ -26,7 +25,6 @@ int main(int argc, char *argv[]) {
 
 	int debug = 0; /* Debug output: 0 no detail - 1 some detail - 2 all detail */
 
-	int cores = 1; 
 	int dimension = 10;
 	double precision = 0.0001;
 
@@ -44,16 +42,7 @@ int main(int argc, char *argv[]) {
 	/* Parse command line input */
 	int a;
 	for (a = 1; a < argc; a++) { /* argv[0] is program name */
-		if (strcmp(argv[a], "-c") == 0 || strcmp(argv[a], "-cores") == 0) { // Value of 0 means strings are identical
-			if (a + 1 <= argc - 1) { /* Make sure we have more arguments */
-				if (atoi(argv[a+1]) > 0) {
-					a++;
-					cores = atoi(argv[a]);
-				} else {
-					fprintf(stderr, "LOG WARNING - Invalid argument for -c. Positive integer required. Using %d cores as default.\n", cores);
-				}
-			}
-		} else if (strcmp(argv[a], "-d") == 0 || strcmp(argv[a], "-dimension") == 0) {
+		if (strcmp(argv[a], "-d") == 0 || strcmp(argv[a], "-dimension") == 0) {
 			if (a + 1 <= argc - 1) { /* Make sure we have more arguments */
 				if (atoi(argv[a+1]) > 0) {
 					a++;
@@ -156,7 +145,6 @@ int main(int argc, char *argv[]) {
 	if (dimension < 3) dimension = 3;
 	
 	if (debug >= 1) {
-		fprintf(stdout, "LOG FINE - Using %d cores.\n", cores);
 		fprintf(stdout, "LOG FINE - Using array of dimension %d.\n", dimension);
 		fprintf(stdout, "LOG FINE - Working to precision of %.10lf.\n", precision);
 	}

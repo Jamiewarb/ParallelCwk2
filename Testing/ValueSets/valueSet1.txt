@@ -1,0 +1,53 @@
+Precision: 0.1
+Dimension: 4x4
+Parallel Threads: 1, 2, 4, 8
+
+Original Array:
+2 4 2 4
+4 2 4 2
+2 2 2 4
+4 2 4 4
+
+Relaxed Array (manually):
+Steps:
+2 4   2   4    2 4   2    4    2 4     2     4    2 4      2      4
+4 3.5 2   2 -> 4 3   2.75 2 -> 4 3.375 2.5   2 -> 4 3.25   2.6875 2 -> 
+2 2   3.5 4    2 2.75 3   4    2 2.5   3.375 4    2 2.6875 3.375  4
+4 2   4   4    4 2    4   4    4 2     4     4    4 2      4      4
+Final Array:
+2 4       2       4
+4 3.34375 2.625   2
+2 2.625   3.34375 4
+4 2       4       4
+
+Relaxed Array (sequential):
+2 4       2       4
+4 3.34375 2.625   2
+2 2.625   3.34375 4
+4 2       4       4
+
+Relaxed Array T:1 (parallel):
+2 4       2       4
+4 3.34375 2.625   2
+2 2.625   3.34375 4
+4 2       4       4
+
+Relaxed Array T:2 (parallel):
+2 4       2       4
+4 3.34375 2.625   2
+2 2.625   3.34375 4
+4 2       4       4
+
+Relaxed Array T:4 (parallel):
+2 4       2       4
+4 3.34375 2.625   2
+2 2.625   3.34375 4
+4 2       4       4
+
+Relaxed Array T:8 (parallel):
+2 4       2       4
+4 3.34375 2.625   2
+2 2.625   3.34375 4
+4 2       4       4
+
+Tests Successful
