@@ -26,10 +26,6 @@
 double fRand(double, double);
 void printArray(double*, int, int);
 
-struct ProcessPiece {
-    int startRow, endRow, elements;
-};
-
 int main(int argc, char *argv[]) {
 	
 	MPI_Status status;
@@ -57,7 +53,7 @@ int main(int argc, char *argv[]) {
 	
 	
 	// Whether to use ANSI colour codes in output (turn off when using Balena's output logging)
-	int useAnsi = 1;
+	int useAnsi = 0;
 
 	/* End editable values */
 
@@ -66,6 +62,7 @@ int main(int argc, char *argv[]) {
 
 	// We need to use these in analysing the time the program takes
 	double diff;
+	struct timespec start, end;
 
 	/* Parse command line input */
 	int a;
@@ -119,6 +116,9 @@ int main(int argc, char *argv[]) {
 	// Check our precision isn't too extreme, and our dimension is of a large enough size
 	if (precision < 0.0000000001) precision = 0.0000000001;
 	if (dimension < 3) dimension = 3;
+
+	// Used to get the starting time of the program, in nanoseconds
+	//clock_gettime(CLOCK_MONOTONIC, &start);
 
 	// From here on, all processes execute this code
 	MPI_Init(NULL, NULL);
@@ -196,56 +196,32 @@ int main(int argc, char *argv[]) {
 		int initial_end_row = avg_rows - 1; // Set end row of master thread, decrement for index (row 1 -> index 0)
 		int e_rows, my_rows;
 
-		struct ProcessPiece pieces[num_procs];
-
 		while (!withinPrecision) {
 			count++;
 			withinPrecision = 1;
-			if (count == 1) {
-				// First time distributing the array, so we need to send the whole portion
 
-				e_rows = extra_rows; // Create a temporary variable that we can decrement
-				end_row = initial_end_row; // Set the initial end_row to that of the master thread's end row
+			e_rows = extra_rows; // Create a temporary variable that we can decrement
+			end_row = initial_end_row; // Set the initial end_row to that of the master thread's end row			
 
-				for (an_id = 1; an_id < num_procs; an_id++) {
-					// Evenly distribute rows, give first threads extra rows until none left
-					my_rows = avg_rows;
-					if (e_rows > 0) {
-						my_rows++;
-						e_rows--;
-					}
-
-					start_row = end_row - 1; // Previous end row is our first editable row + we need the un-editable one before for relaxing
-					end_row   = start_row + (my_rows - 1); // We subtract 1 to get index from row number. End row is final, un-editable row.
-
-					num_elements_to_send = my_rows*dimension; // Multiply by dimension as we need to send the columns per row too
-
-					pieces[an_id].startRow = start_row;
-					pieces[an_id].endRow = end_row;
-					pieces[an_id].elements = num_elements_to_send;
-
-					MPI_Isend( &num_elements_to_send, 1 , MPI_INT,
-										an_id, send_data_tag, MPI_COMM_WORLD, &request );
-
-					MPI_Isend( &values[start_row*dimension], num_elements_to_send, MPI_DOUBLE,
-										an_id, send_data_tag, MPI_COMM_WORLD, &request );
+			for (an_id = 1; an_id < num_procs; an_id++) {
+				// Evenly distribute rows, give first threads extra rows until none left
+				my_rows = avg_rows;
+				if (e_rows > 0) {
+					my_rows++;
+					e_rows--;
 				}
-			} else {
-				// We've already sent the bulk of the array before, so just send outer top + bottom rows that changed
-				for (an_id = 1; an_id < num_procs; an_id++) {
-					start_row = pieces[an_id].startRow;
-					end_row = pieces[an_id].endRow;
 
-					// MPI_Isend top row
-					MPI_Isend( &values[start_row*dimension], dimension, MPI_DOUBLE,
-											an_id, send_data_tag, MPI_COMM_WORLD, &request );
-					// MPI_Isend bottom row
-					MPI_Isend( &values[end_row*dimension], dimension, MPI_DOUBLE,
-											an_id, send_data_tag, MPI_COMM_WORLD, &request );
-				}
+				start_row = end_row - 1; // Previous end row is our first editable row + we need one before for relaxing
+				end_row   = start_row + (my_rows - 1); // We subtract 1 to get index from row number
+
+				num_elements_to_send = my_rows*dimension; // Multiply by dimension as we need to send the columns per row too
+
+				MPI_Isend( &num_elements_to_send, 1 , MPI_INT,
+									an_id, send_data_tag, MPI_COMM_WORLD, &request);
+
+				MPI_Isend( &values[start_row*dimension], num_elements_to_send, MPI_DOUBLE,
+									an_id, send_data_tag, MPI_COMM_WORLD, &request);
 			}
-
-			
 			// Then we need to process our part of the array
 			for (i = 1; i < avg_rows - 1; i++) { // Skip top and bottom rows
 				for (j = 1; j < dimension - 1; j++) { // Skip left and right columns
@@ -270,12 +246,17 @@ int main(int argc, char *argv[]) {
 		
 			// Redo the same logic we did when handing out the rows to find out how many each process had
 			for (an_id = 1; an_id < num_procs; an_id++) {
+				// The first threads were given the extra rows, so is an_id one of these threads?
+				my_rows = avg_rows;
+				if (e_rows > 0) {
+					my_rows++;
+					e_rows--;
+				}
 
-				// Get the rows and elements of this process that we saved earlier
-				start_row = pieces[an_id].startRow;
-				end_row = pieces[an_id].endRow;
+				start_row = end_row - 1; // Previous end row is our first editable row + we need one before for relaxing
+				end_row   = start_row + (my_rows - 1); // We subtract 1 to get index from row number
 
-				num_elements_to_receive = pieces[an_id].elements;
+				num_elements_to_receive = my_rows*dimension;
 
 				// Store the new relaxed portioned array here 
 				// Russel, can this be improved instead of malloc & free each time in the loop? num_elements_to_receive may change...
@@ -288,8 +269,8 @@ int main(int argc, char *argv[]) {
 				MPI_Recv( tempVals, num_elements_to_receive, MPI_DOUBLE, 
 		               				an_id, return_data_tag, MPI_COMM_WORLD, &status);
 
-				MPI_Recv( &returnedWP, 1, MPI_INT, 
-									an_id, return_data_tag, MPI_COMM_WORLD, &status);
+				MPI_Recv( &returnedWP, 1, MPI_INT, an_id, return_data_tag, 
+									MPI_COMM_WORLD, &status);
 
 				// Check if we went out of precision
 				if (withinPrecision && !returnedWP) {
@@ -306,15 +287,14 @@ int main(int argc, char *argv[]) {
 				}
 				free(tempVals);
 			}
-			// We need to tell all slaves to finish or continue
-			for (an_id = 1; an_id < num_procs; an_id++) {
-				MPI_Isend( &withinPrecision, 1 , MPI_INT,
-								an_id, send_data_tag, MPI_COMM_WORLD, &request);
+			// We need to tell all slaves that we've finished
+			if (withinPrecision) {
+				int done = -1;
+				for (an_id = 1; an_id < num_procs; an_id++) {
+					MPI_Isend( &done, 1 , MPI_INT,
+									an_id, send_data_tag, MPI_COMM_WORLD, &request);
+				}
 			}
-
-
-			MPI_Wait(&request, &status);
-
 			// Finally swap the array pointers
 			double *tempValues = values;
 			values = newValues;
@@ -339,7 +319,10 @@ int main(int argc, char *argv[]) {
 
 		fprintf(stdout, "Program complete.\n");
 
+		//clock_gettime(CLOCK_MONOTONIC, &end);	// mark the end time 
 		double endMPI = MPI_Wtime();
+		diff = (end.tv_sec - start.tv_sec);
+		diff += (end.tv_nsec - start.tv_nsec) / 1000000000.0;
 		diff = endMPI-startMPI;
 		
 		printf("elapsed time = %lf seconds\n\n", diff);
@@ -350,44 +333,29 @@ int main(int argc, char *argv[]) {
 	} else {
 		// Executed by all slaves
 		int withinPrecision = 0;
-		int firstTime = 1;
-		int elements_to_receive = 0;
-
-		MPI_Recv(&elements_to_receive, 1, MPI_INT, 
-		               				root_process, send_data_tag, MPI_COMM_WORLD, &status);
-		// Declare two arrays, one to receive current values & one to store changes
-		double *values = malloc(elements_to_receive * sizeof(double));
-		double *newValues = malloc(elements_to_receive * sizeof(double));
-
-		int i, j;
-		int rows = elements_to_receive / dimension;
-
-		if (!values || !newValues) {
-			fprintf(stderr, "LOG ERROR - Failed to malloc. Exiting program.\n");
-			return 1;
-		}
-
 		while (!withinPrecision) {
-			if (firstTime) {
-				firstTime = 0;
+			MPI_Recv(&num_elements_to_receive, 1, MPI_INT, 
+	               				root_process, send_data_tag, MPI_COMM_WORLD, &status);
 
-		        MPI_Recv(values, elements_to_receive, MPI_DOUBLE, 
-		               				root_process, send_data_tag, MPI_COMM_WORLD, &status);
-		        for (i = 0; i < rows - 0; i++) {
-					for (j = 0; j < dimension - 0; j++) {
-						newValues[i*dimension+j] = values[i*dimension+j];
-					}
-				}
-				
-			} else {
-				// We've already got the main bulk of the array so get extra rows
-				MPI_Recv(values, dimension, MPI_DOUBLE, 
-		               				root_process, send_data_tag, MPI_COMM_WORLD, &status);
-
-				MPI_Recv(&values[(rows-1)*dimension], dimension, MPI_DOUBLE, 
-		               				root_process, send_data_tag, MPI_COMM_WORLD, &status);
-
+			if (num_elements_to_receive == -1) {
+				withinPrecision = 1;
+				continue;
 			}
+
+			// Declare two arrays, one to receive current values & one to store changes
+			double *values = malloc(num_elements_to_receive * sizeof(double));
+			double *newValues = malloc(num_elements_to_receive * sizeof(double));
+			if (!values || !newValues) {
+				fprintf(stderr, "LOG ERROR - Failed to malloc. Exiting program.\n");
+				return 1;
+			}
+
+	        MPI_Recv(values, num_elements_to_receive, MPI_DOUBLE, 
+	               				root_process, send_data_tag, MPI_COMM_WORLD, &status);
+	    
+
+	        int i, j;
+	        int rows = num_elements_to_receive / dimension;
 
 			withinPrecision = 1; // Will be set to 0 if a number changes more than precision
 
@@ -404,24 +372,21 @@ int main(int argc, char *argv[]) {
 			}
 
 			// Send back our relaxed array
-			MPI_Send( newValues, elements_to_receive, MPI_DOUBLE, 
+			MPI_Send( newValues, num_elements_to_receive, MPI_DOUBLE, 
 								root_process, return_data_tag, MPI_COMM_WORLD);
+
 			
 			// Send back our value for withinPrecision
 			MPI_Send( &withinPrecision, 1, MPI_INT, 
 								root_process, return_data_tag, MPI_COMM_WORLD);
-		
-			// Wait for master to tell us if we need to continue or stop
-			MPI_Recv(&withinPrecision, 1, MPI_INT, 
-		               				root_process, send_data_tag, MPI_COMM_WORLD, &status);
 
-			double *tempValues = values;
-			values = newValues;
-			newValues = tempValues;
+			free(values);
+			free(newValues);
+
+			// Keep the loop going. First Recv will be -1 if we need to terminate
+			withinPrecision = 0;
 
 		}
-		free(values);
-		free(newValues);
 	}
 	// Finalize the MPI environment.
 	MPI_Finalize();

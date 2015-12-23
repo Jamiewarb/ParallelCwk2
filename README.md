@@ -10,8 +10,8 @@ Source, Values and Testing
 **Testing** - the testing document, the values utilised by it and the test output logs  
 
 ####Compiling and Running
-Compile sequential.c using `gcc -Wall -pthread -o sequential sequential.c -lrt`  
-Compile ompi-parallel.c using `mpicc -Wall -o ompi-parallel ompi-parallel.c -lrt`
+Compile sequential.c using `gcc -Wall -o sequential sequential.c -lrt`  
+Compile ompi-parallel.c using `mpicc -Wall -o ompi-parallel ompi-parallel.c`
 
 Both programs can be run with these possible flags:  
 -debug : The level of debug output: 0, 1, 2, 3 (*default: 0*)  
@@ -27,7 +27,7 @@ For example:
 Excluding a flag will use the default value.
 
 ####Value Sets
-By default, the program reads from a text file, as generating numbers makes testing more obtuse.  
+By default, the program reads from the text file at Values/values.txt, as generating numbers makes testing more obtuse.  
 Capability to run with generated numbers is, however, provided through -g 1.  
 
 The program will read doubles from a file until enough have been read.  

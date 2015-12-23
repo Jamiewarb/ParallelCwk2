@@ -51,7 +51,7 @@ int main(int argc, char *argv[]) {
 
 
 	// We need to use these in analysing the time the program takes
-	uint64_t diff;
+	double diff;
 	struct timespec start, end;
 
 	/* Parse command line input */
@@ -204,10 +204,11 @@ int main(int argc, char *argv[]) {
 
 	fprintf(stdout, "Program complete.\n");
 
-	clock_gettime(CLOCK_MONOTONIC, &end);	/* mark the end time */
-
-	diff = BILLION * (end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
-	printf("elapsed time = %llu nanoseconds\n", (long long unsigned int) diff);
+	clock_gettime(CLOCK_MONOTONIC, &end);	// mark the end time
+	diff = (end.tv_sec - start.tv_sec);
+	diff += (end.tv_nsec - start.tv_nsec) / 1000000000.0;
+		
+	printf("elapsed time = %lf seconds\n\n", diff);
 
 	return 0;
 }
