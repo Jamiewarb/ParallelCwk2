@@ -1,0 +1,30 @@
+/home/k/jw715
+LOG FINE - Using 4 cores.
+LOG FINE - Using array of dimension 10000.
+LOG FINE - Working to precision of 0.0010000000.
+
+LOG FINE - Program complete. Relaxation count: 332.
+Program complete.
+elapsed time = 276.214282 seconds
+
+LOG FINE - Using 8 cores.
+LOG FINE - Using array of dimension 10000.
+LOG FINE - Working to precision of 0.0010000000.
+
+LOG FINE - Program complete. Relaxation count: 332.
+Program complete.
+elapsed time = 168.349250 seconds
+
+
+########################################################################
+----------------------! Balena Job Details !----------------------------
+
+JobID          : 99089
+No. of nodes   : 4
+No. of CPUs    : 64
+Timelimit      : 00:12:00
+Elapsed time   : 00:07:27
+Nodelist       : node-sw-[161-164]
+
+########################################################################
+
