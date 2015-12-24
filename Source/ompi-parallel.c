@@ -169,7 +169,7 @@ int main(int argc, char *argv[]) {
 		srand((unsigned)time(NULL));
 
 		int i, j;
-		// We need i*j numbers, in both arrays
+		// We need i*j numbers in the array
 		for (i = 0; i < dimension; i++) {
 			for (j = 0; j < dimension; j++) {
 				// If we're going to generate the numbers, or use predetermined ones
@@ -207,8 +207,9 @@ int main(int argc, char *argv[]) {
 		int initial_end_row = avg_rows - 1; // Set end row of master thread, decrement for index (row 1 -> index 0)
 		int e_rows, my_rows;
 
-		struct ProcessPiece pieces[num_procs];
+		struct ProcessPiece pieces[num_procs]; // Used to remember which id had what start & end row, and how many elements
 
+		// We store our own individual part of the matrix here, both before and after relaxation
 		double *myValues = malloc(avg_rows * dimension * sizeof(double));
 		double *myNewValues = malloc(avg_rows * dimension * sizeof(double));
 
@@ -216,9 +217,9 @@ int main(int argc, char *argv[]) {
 			count++;
 			withinPrecision = 1;
 			if (count == 1) {
-				// First time distributing the array, so we need to send the whole portion
+				// First time distributing the array, so we need to send the whole portion to each process
 
-				e_rows = extra_rows; // Create a temporary variable that we can decrement
+				e_rows = extra_rows; // Create a temporary variable that we can decrement to keep track of extra rows left
 				end_row = initial_end_row; // Set the initial end_row to that of the master thread's end row
 
 				for (an_id = 1; an_id < num_procs; an_id++) {
@@ -229,21 +230,26 @@ int main(int argc, char *argv[]) {
 						e_rows--;
 					}
 
-					start_row = end_row - 1; // Previous end row is our first editable row + we need the un-editable one before for relaxing
+					start_row = end_row - 1; // Previous end row is our first editable row + we need the un-editable row before it for relaxing
 					end_row   = start_row + (my_rows - 1); // We subtract 1 to get index from row number. End row is final, un-editable row.
 
 					num_elements_to_send = my_rows*dimension; // Multiply by dimension as we need to send the columns per row too
 
+					// Store this information in our struct for later use when we receive the array back
 					pieces[an_id].startRow = start_row;
 					pieces[an_id].endRow = end_row;
 					pieces[an_id].elements = num_elements_to_send;
 
+					// Finally, non-blocking send to the process, 
+					// telling it how many numbers it will receive, and then the number themselves
 					MPI_Isend( &num_elements_to_send, 1 , MPI_INT,
 										an_id, send_data_tag, MPI_COMM_WORLD, &request );
 
 					MPI_Isend( &values[start_row*dimension], num_elements_to_send, MPI_DOUBLE,
 										an_id, send_data_tag, MPI_COMM_WORLD, &request );
 				}
+
+				// Finally, we need to give ourselves our own part of the array
 				for (i = 0; i < avg_rows; i++) {
 					for (j = 0; j < dimension; j++) {
 						myValues[i*dimension+j] = values[i*dimension+j];
@@ -251,6 +257,9 @@ int main(int argc, char *argv[]) {
 					}
 				}
 			} else {
+				// This is the second time through, so each process already has its array
+				// So we only need to send process 1 our bottom editable row, and receive back their top editable row
+
 				// Send last editable row to the right
 				MPI_Isend( &myValues[(avg_rows-2)*dimension], dimension , MPI_DOUBLE,
 								(root_process + 1), send_data_tag, MPI_COMM_WORLD, &request);
@@ -274,28 +283,30 @@ int main(int argc, char *argv[]) {
 				}
 			}
 
-			// Make sure they've actually received it by now
+			// Make sure they've actually received what we've sent by now
 			MPI_Wait(&request, &status);
 
 			int returnedWP = 0;
 
+			// Check with each process to see if they went out of precision on this iteration
 			for (an_id = 1; an_id < num_procs; an_id++) {
 				MPI_Recv( &returnedWP, 1, MPI_INT, 
 									an_id, return_data_tag, MPI_COMM_WORLD, &status);
 
-				// Check if we went out of precision
+				// Check if they went out of precision
 				if (withinPrecision && !returnedWP) {
 					withinPrecision = 0;
 				}
 			}
 
 
-
+			// Tell all processes if we have or haven't gone out of precision
 			for (an_id = 1; an_id < num_procs; an_id++) {
 				MPI_Isend( &withinPrecision, 1 , MPI_INT,
 								an_id, send_data_tag, MPI_COMM_WORLD, &request);
 			}
 
+			// Swap the arrays, ready for the next iteration
 			double *tempValues = myValues;
 			myValues = myNewValues;
 			myNewValues = tempValues;
@@ -322,10 +333,11 @@ int main(int argc, char *argv[]) {
 				return 1;
 			}
 
+			// Receive the values from process number an_id, into tempVals
 			MPI_Recv( tempVals, num_elements_to_receive, MPI_DOUBLE, 
 		               			an_id, return_data_tag, MPI_COMM_WORLD, &status);
 
-			rows = num_elements_to_receive / dimension;
+			rows = end_row + 1 - start_row;
 
 			// Finally merge this portion of the array in to values
 			for (i = 1; i < rows - 1; i++) { // Skip top and bottom rows
@@ -385,13 +397,16 @@ int main(int argc, char *argv[]) {
 			return 1;
 		}
 
+		// Loop to keep going until program is finished
 		while (!withinPrecision) {
+			// If this is the first time we are going through this loop then we receive full array from master
 			if (firstTime) {
 				firstTime = 0;
 
-
+				// Receive our entire section of main matrix, including extra top and bottom row for use in relaxing
 		        MPI_Recv(values, elements_to_receive, MPI_DOUBLE, 
 		               				root_process, send_data_tag, MPI_COMM_WORLD, &status);
+		        // Copy this into the new array as well
 		        for (i = 0; i < rows; i++) {
 					for (j = 0; j < dimension; j++) {
 						newValues[i*dimension+j] = values[i*dimension+j];
@@ -399,10 +414,11 @@ int main(int argc, char *argv[]) {
 				}
 
 			} else {
-				// We've already got the main bulk of the array so get extra rows
+				// This isn't the first time in the loop, so we've already got the 
+				// main bulk of the array, so just get extra rows from neighbouring processes
 
 				
-				// And send first editable row to the left
+				// Send first editable row to the left
 				MPI_Isend( &values[dimension], dimension , MPI_DOUBLE,
 								my_id-1, send_data_tag, MPI_COMM_WORLD, &request);
 				// Then send last editable row to the right if not the last slave
@@ -427,6 +443,7 @@ int main(int argc, char *argv[]) {
 
 			withinPrecision = 1; // Will be set to 0 if a number changes more than precision
 
+			// Time to relax and unwind
 			for (i = 1; i < rows - 1; i++) { // Skip top and bottom rows
 				for (j = 1; j < dimension - 1; j++) { // Skip left and right columns
 					// Store relaxed number into new array
@@ -447,13 +464,16 @@ int main(int argc, char *argv[]) {
 			MPI_Recv( &withinPrecision, 1, MPI_INT, 
 		               				root_process, send_data_tag, MPI_COMM_WORLD, &status);
 
+			// Finally swap the arrays around, ready for the next iteration
 			double *tempValues = values;
 			values = newValues;
 			newValues = tempValues;
 
 		}
+		// We've finished, so send our section back to the master
 		MPI_Send( values, elements_to_receive, MPI_DOUBLE, 
 								root_process, return_data_tag, MPI_COMM_WORLD);
+		// Need that space back please
 		free(values);
 		free(newValues);
 	}
@@ -462,6 +482,7 @@ int main(int argc, char *argv[]) {
 	return 0;
 }
 
+// Function used to print out the full array, so as not to duplicate code
 void printArray(double *values, int dimension, int useAnsi) {
 	int i, j;
 	for (i = 0; i < dimension; i++) {
