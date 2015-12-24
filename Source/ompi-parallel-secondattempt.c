@@ -151,7 +151,8 @@ int main(int argc, char *argv[]) {
 
 		/* Set up two arrays, one to store current results & one to store changes */
 		double *values = malloc(dimension * dimension * sizeof(double));
-		if (!values) {
+		double *newValues = malloc(dimension * dimension * sizeof(double));
+		if (!values || !newValues) {
 			fprintf(stderr, "LOG ERROR - Failed to malloc. Exiting program.\n");
 			return 1;
 		}
@@ -172,6 +173,8 @@ int main(int argc, char *argv[]) {
 						fscanf(valueFile, "%lf", &values[i*dimension+j]);
 					}
 				}
+				// And copy them to the new array as well
+				newValues[i*dimension+j] = values[i*dimension+j];
 			}
 		}
 		
@@ -190,12 +193,6 @@ int main(int argc, char *argv[]) {
 		int count = 0; // Count how many times we try to relax the square array
 		int withinPrecision = 0; // 1 when pass entirely completed within precision, i.e. finished
 
-		// Make sure we don't try to use more cores than we have rows to process
-		if (num_procs > (dimension - 2)) {
-			fprintf(stdout, "LOG ERROR - Too many threads for these dimensions. Please reduce threadcount, or increase problem dimensions");
-			return 1;
-		}
-
 		// Set some initial values that only need setting once, and can be reused
 		int avg_rows = (floor((dimension - 2) / num_procs)) + 2; // We add two as we need the previous and next rows for relaxing
 		int extra_rows = (dimension - 2) % num_procs; // Get number of extra, remainder rows
@@ -203,9 +200,6 @@ int main(int argc, char *argv[]) {
 		int e_rows, my_rows;
 
 		struct ProcessPiece pieces[num_procs];
-
-		double *myValues = malloc(avg_rows * dimension * sizeof(double));
-		double *myNewValues = malloc(avg_rows * dimension * sizeof(double));
 
 		while (!withinPrecision) {
 			count++;
@@ -239,42 +233,64 @@ int main(int argc, char *argv[]) {
 					MPI_Isend( &values[start_row*dimension], num_elements_to_send, MPI_DOUBLE,
 										an_id, send_data_tag, MPI_COMM_WORLD, &request );
 				}
-				for (i = 0; i < avg_rows; i++) {
-					for (j = 0; j < dimension; j++) {
-						myValues[i*dimension+j] = values[i*dimension+j];
-						myNewValues[i*dimension+j] = myValues[i*dimension+j];
-					}
-				}
 			} else {
-				// Send last editable row to the right
-				MPI_Isend( &myValues[(avg_rows-2)*dimension], dimension , MPI_DOUBLE,
-								(root_process + 1), send_data_tag, MPI_COMM_WORLD, &request);
+				// We've already sent the bulk of the array before, so just send outer top + bottom rows that changed
+				for (an_id = 1; an_id < num_procs; an_id++) {
+					start_row = pieces[an_id].startRow;
+					end_row = pieces[an_id].endRow;
 
-				// And receive last un-editable row from the right
-				MPI_Recv( &myValues[(avg_rows-1)*dimension], dimension , MPI_DOUBLE,
-								(root_process + 1), send_data_tag, MPI_COMM_WORLD, &status);
-
+					// MPI_Isend top row
+					MPI_Isend( &values[start_row*dimension], dimension, MPI_DOUBLE,
+											an_id, send_data_tag, MPI_COMM_WORLD, &request );
+					// MPI_Isend bottom row
+					MPI_Isend( &values[end_row*dimension], dimension, MPI_DOUBLE,
+											an_id, send_data_tag, MPI_COMM_WORLD, &request );
+				}
 			}
+
 			
 			// Then we need to process our part of the array
 			for (i = 1; i < avg_rows - 1; i++) { // Skip top and bottom rows
 				for (j = 1; j < dimension - 1; j++) { // Skip left and right columns
 					// Store relaxed number into new array
-					myNewValues[i*dimension+j] = (myValues[(i-1)*dimension+j] + myValues[(i+1)*dimension+j] 
-								  + myValues[i*dimension+(j-1)] + myValues[i*dimension+(j+1)]) / 4.0;
+					newValues[i*dimension+j] = (values[(i-1)*dimension+j] + values[(i+1)*dimension+j] 
+								  + values[i*dimension+(j-1)] + values[i*dimension+(j+1)]) / 4.0;
 					/* If the numbers changed more than precision, we need to do it again */
-					if (withinPrecision == 1 && fabs(myValues[i*dimension+j] - myNewValues[i*dimension+j]) > precision) {
+					if (withinPrecision == 1 && fabs(values[i*dimension+j] - newValues[i*dimension+j]) > precision) {
 						withinPrecision = 0;
 					}
 				}
 			}
 
+			// Now we need to receive the slave's portions
+			e_rows = extra_rows;
+			end_row = initial_end_row;
+			int returnedWP = 1;
+			int rows;
+
 			// Make sure they've actually received it by now
 			MPI_Wait(&request, &status);
-
-			int returnedWP = 0;
-
+		
+			// Redo the same logic we did when handing out the rows to find out how many each process had
 			for (an_id = 1; an_id < num_procs; an_id++) {
+
+				// Get the rows and elements of this process that we saved earlier
+				start_row = pieces[an_id].startRow;
+				end_row = pieces[an_id].endRow;
+
+				num_elements_to_receive = pieces[an_id].elements;
+
+				// Store the new relaxed portioned array here 
+				// Russel, can this be improved instead of malloc & free each time in the loop? num_elements_to_receive may change...
+				double *tempVals = malloc(num_elements_to_receive * sizeof(double)); 
+				if (!tempVals) {
+					fprintf(stderr, "LOG ERROR - Failed to malloc. Exiting program.\n");
+					return 1;
+				}
+
+				MPI_Recv( tempVals, num_elements_to_receive, MPI_DOUBLE, 
+		               				an_id, return_data_tag, MPI_COMM_WORLD, &status);
+
 				MPI_Recv( &returnedWP, 1, MPI_INT, 
 									an_id, return_data_tag, MPI_COMM_WORLD, &status);
 
@@ -282,59 +298,34 @@ int main(int argc, char *argv[]) {
 				if (withinPrecision && !returnedWP) {
 					withinPrecision = 0;
 				}
+
+				rows = num_elements_to_receive / dimension;
+
+				// Finally merge this portion of the array in to newValues
+				for (i = 1; i < rows - 1; i++) { // Skip top and bottom rows
+					for (j = 1; j < dimension - 1; j++) { // Skip left and right columns
+						newValues[(start_row+i)*dimension+j] = tempVals[i*dimension+j];
+					}
+				}
+				free(tempVals);
 			}
-
-
-
+			// We need to tell all slaves to finish or continue
 			for (an_id = 1; an_id < num_procs; an_id++) {
 				MPI_Isend( &withinPrecision, 1 , MPI_INT,
 								an_id, send_data_tag, MPI_COMM_WORLD, &request);
 			}
 
-			double *tempValues = myValues;
-			myValues = myNewValues;
-			myNewValues = tempValues;
 
 			MPI_Wait(&request, &status);
-		}
 
-		// Here we have finished in precision, and need to collect the array from the slaves
+			// Finally swap the array pointers
+			double *tempValues = values;
+			values = newValues;
+			newValues = tempValues;
 
-		int rows;
-
-		// Get the rows and elements of this process that we saved earlier
-		for (an_id = 1; an_id < num_procs; an_id++) {
-			start_row = pieces[an_id].startRow;
-			end_row = pieces[an_id].endRow;
-
-			num_elements_to_receive = pieces[an_id].elements;
-
-			// Store the new relaxed portioned array here 
-			// Russel, can this be improved instead of malloc & free each time in the loop? num_elements_to_receive may change...
-			double *tempVals = malloc(num_elements_to_receive * sizeof(double)); 
-			if (!tempVals) {
-				fprintf(stderr, "LOG ERROR - Failed to malloc. Exiting program.\n");
-				return 1;
-			}
-
-			MPI_Recv( tempVals, num_elements_to_receive, MPI_DOUBLE, 
-		               			an_id, return_data_tag, MPI_COMM_WORLD, &status);
-
-			rows = num_elements_to_receive / dimension;
-
-			// Finally merge this portion of the array in to values
-			for (i = 1; i < rows - 1; i++) { // Skip top and bottom rows
-				for (j = 1; j < dimension - 1; j++) { // Skip left and right columns
-					values[(start_row+i)*dimension+j] = tempVals[i*dimension+j];
-				}
-			}
-			free(tempVals);
-
-		}
-
-		for (i = 1; i < avg_rows-1; i++) { // Skip top and bottom rows
-			for (j = 1; j < dimension - 1; j++) { // Skip left and right columns
-				values[i*dimension+j] = myValues[i*dimension+j];
+			if (debug >= 3) {
+				fprintf(stdout, "LOG GRANULAR - Array at step %d:\n", count);
+				printArray(values, dimension, useAnsi);
 			}
 		}
 
@@ -347,6 +338,7 @@ int main(int argc, char *argv[]) {
 		
 		// Your work here is done
 		free(values);
+		free(newValues);
 
 		fprintf(stdout, "Program complete.\n");
 
@@ -359,12 +351,10 @@ int main(int argc, char *argv[]) {
 
 
 	} else {
-
 		// Executed by all slaves
 		int withinPrecision = 0;
 		int firstTime = 1;
 		int elements_to_receive = 0;
-
 
 		MPI_Recv(&elements_to_receive, 1, MPI_INT, 
 		               				root_process, send_data_tag, MPI_COMM_WORLD, &status);
@@ -384,40 +374,22 @@ int main(int argc, char *argv[]) {
 			if (firstTime) {
 				firstTime = 0;
 
-
 		        MPI_Recv(values, elements_to_receive, MPI_DOUBLE, 
 		               				root_process, send_data_tag, MPI_COMM_WORLD, &status);
-		        for (i = 0; i < rows; i++) {
-					for (j = 0; j < dimension; j++) {
+		        for (i = 0; i < rows - 0; i++) {
+					for (j = 0; j < dimension - 0; j++) {
 						newValues[i*dimension+j] = values[i*dimension+j];
 					}
 				}
-
+				
 			} else {
 				// We've already got the main bulk of the array so get extra rows
+				MPI_Recv(values, dimension, MPI_DOUBLE, 
+		               				root_process, send_data_tag, MPI_COMM_WORLD, &status);
 
-				
-				// And send first editable row to the left
-				MPI_Isend( &values[dimension], dimension , MPI_DOUBLE,
-								my_id-1, send_data_tag, MPI_COMM_WORLD, &request);
-				// Then send last editable row to the right if not the last slave
-				if (my_id != num_procs - 1) {
-					MPI_Isend( &values[(rows-2)*dimension], dimension , MPI_DOUBLE,
-									my_id+1, send_data_tag, MPI_COMM_WORLD, &request);
-				}
+				MPI_Recv(&values[(rows-1)*dimension], dimension, MPI_DOUBLE, 
+		               				root_process, send_data_tag, MPI_COMM_WORLD, &status);
 
-				// Receiving first, un-editable row from the left
-				MPI_Recv( &values[0], dimension , MPI_DOUBLE,
-								my_id-1, send_data_tag, MPI_COMM_WORLD, &status);
-
-				// Receiving last un-editable row from the right, if not the last slave
-				if (my_id != num_procs - 1) {
-					MPI_Recv( &values[(rows-1)*dimension], dimension, MPI_DOUBLE, 
-		               			my_id+1, send_data_tag, MPI_COMM_WORLD, &status);
-				}
-
-				
-				
 			}
 
 			withinPrecision = 1; // Will be set to 0 if a number changes more than precision
@@ -434,12 +406,16 @@ int main(int argc, char *argv[]) {
 				}
 			}
 
-			// Send back our value for withinPrecisions
+			// Send back our relaxed array
+			MPI_Send( newValues, elements_to_receive, MPI_DOUBLE, 
+								root_process, return_data_tag, MPI_COMM_WORLD);
+			
+			// Send back our value for withinPrecision
 			MPI_Send( &withinPrecision, 1, MPI_INT, 
 								root_process, return_data_tag, MPI_COMM_WORLD);
-
+		
 			// Wait for master to tell us if we need to continue or stop
-			MPI_Recv( &withinPrecision, 1, MPI_INT, 
+			MPI_Recv(&withinPrecision, 1, MPI_INT, 
 		               				root_process, send_data_tag, MPI_COMM_WORLD, &status);
 
 			double *tempValues = values;
@@ -447,8 +423,6 @@ int main(int argc, char *argv[]) {
 			newValues = tempValues;
 
 		}
-		MPI_Send( values, elements_to_receive, MPI_DOUBLE, 
-								root_process, return_data_tag, MPI_COMM_WORLD);
 		free(values);
 		free(newValues);
 	}
