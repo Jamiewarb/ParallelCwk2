@@ -108,7 +108,7 @@ int main(int argc, char *argv[]) {
 	if (dimension < 3) dimension = 3;
 
 	// Used to get the starting time of the program, in nanoseconds
-	clock_gettime(CLOCK_MONOTONIC, &start);
+	//clock_gettime(CLOCK_MONOTONIC, &start);
 
 	// We need to load the text file to read the numbers from
 	FILE *valueFile;
@@ -204,7 +204,7 @@ int main(int argc, char *argv[]) {
 
 	fprintf(stdout, "Program complete.\n");
 
-	clock_gettime(CLOCK_MONOTONIC, &end);	// mark the end time
+	//clock_gettime(CLOCK_MONOTONIC, &end);	// mark the end time
 	diff = (end.tv_sec - start.tv_sec);
 	diff += (end.tv_nsec - start.tv_nsec) / 1000000000.0;
 		
