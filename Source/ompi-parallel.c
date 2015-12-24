@@ -49,17 +49,17 @@ int main(int argc, char *argv[]) {
 	 * textFile[] - text file to read numbers from. Needs to be set and filled in if generateNumbers == 0
 	 */
 
-	int debug = 2; /* Debug output: 0 no detail - 1 some detail - 2 most detail - 3 step by step detail */
+	int debug = 1; /* Debug output: 0 no detail - 1 some detail - 2 most detail - 3 step by step detail */
  
 	int dimension = 1000;
-	double precision = 0.1;
+	double precision = 0.0001;
 
 	int generateNumbers = 0;
 	// textFile needs to be set and filled in if generateNumbers == 0
 	char textFile[] = "../Values/values.txt";
 	
 	
-	// Whether to use ANSI colour codes in output (turn off when using Balena's output logging)
+	// Whether to use ANSI colour codes in output (turn off when not outputting straight to console, such as to file on balena)
 	int useAnsi = 1;
 
 	/* End editable values */
@@ -67,7 +67,7 @@ int main(int argc, char *argv[]) {
 	
 
 
-	// We need to use these in analysing the time the program takes
+	// We need to use this in analysing the time the program takes
 	double diff;
 
 	/* Parse command line input */
@@ -134,6 +134,16 @@ int main(int argc, char *argv[]) {
 	MPI_Comm_rank(MPI_COMM_WORLD, &my_id);
     MPI_Comm_size(MPI_COMM_WORLD, &num_procs);
 
+    // Make sure we don't try to use more cores than we have rows to process
+    if (num_procs > (dimension - 2)) {
+    	num_procs = dimension - 2;
+    	if (my_id > num_procs - 1) {
+    		MPI_Finalize();
+    		return 0;
+    	}
+    }
+
+
     if (my_id == root_process) {
 
     	// Executed by the master process
@@ -149,7 +159,7 @@ int main(int argc, char *argv[]) {
 			}
 		}
 
-		/* Set up two arrays, one to store current results & one to store changes */
+		// Set up an array to store the matrix
 		double *values = malloc(dimension * dimension * sizeof(double));
 		if (!values) {
 			fprintf(stderr, "LOG ERROR - Failed to malloc. Exiting program.\n");
@@ -190,11 +200,6 @@ int main(int argc, char *argv[]) {
 		int count = 0; // Count how many times we try to relax the square array
 		int withinPrecision = 0; // 1 when pass entirely completed within precision, i.e. finished
 
-		// Make sure we don't try to use more cores than we have rows to process
-		if (num_procs > (dimension - 2)) {
-			fprintf(stdout, "LOG ERROR - Too many threads for these dimensions. Please reduce threadcount, or increase problem dimensions");
-			return 1;
-		}
 
 		// Set some initial values that only need setting once, and can be reused
 		int avg_rows = (floor((dimension - 2) / num_procs)) + 2; // We add two as we need the previous and next rows for relaxing
